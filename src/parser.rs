@@ -13,6 +13,13 @@ pub enum ParsepatchError {
     InvalidString(usize),
 }
 
+#[derive(Debug)]
+pub enum UnquoteError {
+    InvalidQuotedString,
+    InvalidQuotedCharacter,
+    QuotedStringOverflow,
+}
+
 pub type Result<T> = result::Result<T, ParsepatchError>;
 
 impl Display for ParsepatchError {
@@ -27,6 +34,16 @@ impl Display for ParsepatchError {
             ParsepatchError::NoFilename(n) => writeln!(f, "Cannot get filename at line {}", n),
             ParsepatchError::IOError(s) => writeln!(f, "Cannot read the file {}", s),
             ParsepatchError::InvalidString(n) => writeln!(f, "Invalid utf-8 at line {}", n),
+        }
+    }
+}
+
+impl Display for UnquoteError {
+    fn fmt(&self, f: &mut Formatter) -> result::Result<(), fmt::Error> {
+        match self {
+            UnquoteError::InvalidQuotedString => writeln!(f, "Invalid quoted string"),
+            UnquoteError::InvalidQuotedCharacter => writeln!(f, "Invalid quoted character"),
+            UnquoteError::QuotedStringOverflow => writeln!(f, "Quoted string overflow"),
         }
     }
 }
@@ -260,6 +277,81 @@ impl<'a> LineReader<'a> {
         } else {
             &[]
         }
+    }
+
+    /// Unquote C-style strings.
+    ///
+    /// Based on [0].
+    ///
+    /// [0] https://github.com/git/git/blob/b8242b093d9e941a34460d715e3ce616a34ac3fe/quote.c#L386
+    ///
+    fn unquote(slice: &[u8]) -> result::Result<Vec<u8>, UnquoteError> {
+        // First, make sure we have a quoted string.
+        //
+        // SAFETY: We access 0 and slice.len()-1.
+        if *unsafe { slice.get_unchecked(0) } != b'\"' {
+            return Ok(Vec::from(slice));
+        }
+        if slice.len() < 2 {
+            return Err(UnquoteError::InvalidQuotedString);
+        }
+        if *unsafe { slice.get_unchecked(slice.len() - 1) } != b'\"' {
+            return Err(UnquoteError::InvalidQuotedString);
+        };
+        let slice = unsafe { slice.get_unchecked(1..slice.len() - 1) };
+
+        let mut out = Vec::with_capacity(slice.len());
+
+        let mut r = 0;
+
+        fn advance_checked(r: &mut usize, slice: &[u8]) -> result::Result<u8, UnquoteError> {
+            if *r >= slice.len() {
+                return Err(UnquoteError::QuotedStringOverflow);
+            }
+            // SAFETY: We just checked that r was within bounds.
+            let c = unsafe { slice.get_unchecked(*r) };
+            *r += 1;
+            Ok(*c)
+        }
+
+        while r < slice.len() {
+            let mut c = advance_checked(&mut r, slice)?;
+
+            let new_c = match c {
+                b'\\' => {
+                    c = advance_checked(&mut r, slice)?;
+                    match c {
+                        //
+                        b'a' => b'\x07',
+                        b'b' => b'\x08',
+                        b'f' => b'\x0C',
+                        b'n' => b'\n',
+                        b'r' => b'\r',
+                        b't' => b'\t',
+                        b'v' => b'\x0B',
+                        b'\\' | b'"' => c,
+                        b'0'..b'7' => {
+                            // Octal escapes have three characters between 0 and 7.
+                            let mut code: u8 = (c - b'0') << 6;
+
+                            c = advance_checked(&mut r, slice)?;
+                            code |= (c - b'0') << 3;
+
+                            c = advance_checked(&mut r, slice)?;
+                            code |= c - b'0';
+
+                            code
+                        }
+                        _ => return Err(UnquoteError::InvalidQuotedCharacter),
+                    }
+                }
+                _ => c,
+            };
+
+            out.push(new_c);
+        }
+
+        Ok(out)
     }
 
     fn parse_files(&self) -> Result<(&str, &str)> {
@@ -735,6 +827,46 @@ mod tests {
             let buf = c.0.as_bytes();
             let line = LineReader { buf, line: 1 };
             assert_eq!(line.parse_numbers().unwrap(), c.1);
+        }
+    }
+
+    #[test]
+    fn test_unquote() {
+        let cases = [
+            ("a/hello/world", "a/hello/world"),
+            ("b/world/hello", "b/world/hello"),
+            ("/dev/null", "/dev/null"),
+            ("\"a/h\\303\\251\"", "a/hé"),
+            ("\"a/\\\"quote\"", "a/\"quote"),
+            ("\"\"", ""),
+        ];
+        for c in cases.iter() {
+            let buf = c.0.as_bytes();
+            let v = LineReader::unquote(buf).expect(format!("Should parse {}", c.0).as_str());
+            let s = v.as_slice();
+            assert!(
+                s == c.1.as_bytes(),
+                "Expected `{}` for `{}`, but got `{}`.",
+                c.1,
+                c.0,
+                String::from_utf8(v).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn test_unquote_error() {
+        let cases = [
+            "\"",     // single quote
+            "\"uu",   // unterminated quoted string
+            "\"\\\"", // single quote followed by quoted quote
+        ];
+        for c in cases.iter() {
+            let buf = c.as_bytes();
+            match LineReader::unquote(buf) {
+                Err(_) => continue,
+                Ok(_) => assert!(false, "An error was expected"),
+            }
         }
     }
 
