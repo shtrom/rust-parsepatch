@@ -923,10 +923,10 @@ mod tests {
     #[test]
     fn test_get_file() {
         let cases = [
-            ("a/hello/world", "hello/world"),
-            ("a/world/hello", "world/hello"),
-            ("\"a/h\\303\\251\"", "hé"),
-            ("\"a/\\\"quote\"", "\"quote"),
+            ("a/hello/world", "hello/world", true),
+            ("a/world/hello", "world/hello", true),
+            ("\"a/h\\303\\251\"", "hé", false),
+            ("\"a/\\\"quote\"", "\"quote", false),
         ];
         for c in cases.iter() {
             let buf = c.0.as_bytes();
@@ -938,6 +938,17 @@ mod tests {
                 c.0,
                 String::from_utf8(v.to_vec()).unwrap()
             );
+            assert!(cow_is_borrowed(&v) == c.2) // Fails on the first two
+        }
+    }
+
+    fn cow_is_borrowed<B>(v: &Cow<B>) -> bool
+    where
+        B: ToOwned + ?Sized,
+    {
+        match v {
+            Cow::Borrowed(_) => true,
+            _ => false,
         }
     }
 
