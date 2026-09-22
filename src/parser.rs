@@ -370,7 +370,8 @@ impl<'a> LineReader<'a> {
         let new_path = iter
             .next()
             .ok_or(ParsepatchError::InvalidString(self.get_line()))
-            .map(|s| LineReader::get_filename(s, self.get_line()))?;
+            .map(|s| LineReader::get_filename(s, self.get_line()))?
+            .expect("new_path should be OK");
 
         // SAFETY: we have early returns in case of errors above.
         Ok((
