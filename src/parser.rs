@@ -375,8 +375,8 @@ impl<'a> LineReader<'a> {
 
         // SAFETY: we have early returns in case of errors above.
         Ok((
-            old_path.expect("old_path should be OK"),
-            new_path.expect("new_path should be OK"),
+            old_path,
+            new_path,
         ))
     }
 
