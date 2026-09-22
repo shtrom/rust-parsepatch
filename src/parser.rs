@@ -264,8 +264,8 @@ impl<'a> LineReader<'a> {
             buf
         };
 
-        // SAFETY: get the whole buffer
-        if unsafe { buf.get_unchecked(..) } == b"/dev/null" {
+        // Get the whole slice out of the Cow.
+        if *buf == *b"/dev/null" {
             Ok(Cow::Borrowed(""))
         } else {
             String::from_utf8(buf.to_vec())
