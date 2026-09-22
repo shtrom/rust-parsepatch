@@ -478,13 +478,7 @@ impl<'a> PatchReader<'a> {
                 trace!("Single diff line (mode change): new: {}", new);
 
                 let diff = patch.new_diff();
-                diff.set_info(
-                    &old,
-                    &new,
-                    FileOp::None,
-                    None,
-                    Some(file_mode),
-                );
+                diff.set_info(&old, &new, FileOp::None, None, Some(file_mode));
                 diff.close();
                 return Ok(());
             }
