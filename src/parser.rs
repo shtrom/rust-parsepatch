@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::fmt::{self, Debug, Display, Formatter};
 use std::fs::File;
 use std::io::Read;
@@ -239,7 +240,7 @@ impl<'a> LineReader<'a> {
         Ok((old_start, old_lines, new_start, new_lines))
     }
 
-    fn get_filename(buf: &[u8], line: usize) -> Result<String> {
+    fn get_filename(buf: &'a [u8], line: usize) -> Result<Cow<'a, str>> {
         let mut iter = buf.iter();
         let pos1 = iter
             .position(|c| *c != b' ')
@@ -255,7 +256,7 @@ impl<'a> LineReader<'a> {
 
         let buf = if let Some(start) = buf.get(..2) {
             if start == b"a/" || start == b"b/" {
-                Vec::from(unsafe { buf.get_unchecked(2..) })
+                Cow::Borrowed(unsafe { buf.get_unchecked(2..) })
             } else {
                 buf
             }
@@ -263,22 +264,24 @@ impl<'a> LineReader<'a> {
             buf
         };
 
-        if buf == b"/dev/null" {
-            Ok("".to_string())
+        // SAFETY: get the whole buffer
+        if unsafe { buf.get_unchecked(..) } == b"/dev/null" {
+            Ok(Cow::Borrowed(""))
         } else {
-            std::str::from_utf8(buf.as_slice())
-                .map(String::from)
+            std::str::from_utf8(&buf)
                 .map_err(|_| ParsepatchError::InvalidString(line))
+                .map(String::from)
+                .map(Cow::Owned)
         }
     }
 
-    fn get_file(slice: Option<&[u8]>, starter: &[u8]) -> result::Result<Vec<u8>, String> {
+    fn get_file(slice: Option<&'a [u8]>, starter: &[u8]) -> result::Result<Cow<'a, [u8]>, String> {
         if let Some(path) = slice {
             let path = Self::unquote(path).map_err(|e| format!("{}", e))?;
 
             let path = if let Some(start) = path.get(..2) {
                 if start == starter {
-                    Vec::from(unsafe { path.get_unchecked(2..) })
+                    Cow::Borrowed(unsafe { path.get_unchecked(2..) })
                 } else {
                     path
                 }
@@ -286,9 +289,9 @@ impl<'a> LineReader<'a> {
                 path
             };
 
-            Ok(path)
+            Ok(Cow::Owned(path.to_vec()))
         } else {
-            Ok(Vec::from(""))
+            Ok(Cow::Borrowed(&[]))
         }
     }
 
@@ -298,12 +301,12 @@ impl<'a> LineReader<'a> {
     ///
     /// [0] https://github.com/git/git/blob/b8242b093d9e941a34460d715e3ce616a34ac3fe/quote.c#L386
     ///
-    fn unquote(slice: &[u8]) -> result::Result<Vec<u8>, UnquoteError> {
+    fn unquote(slice: &'a [u8]) -> result::Result<Cow<'a, [u8]>, UnquoteError> {
         // First, make sure we have a quoted string.
         //
         // SAFETY: We access 0 and slice.len()-1.
         if *unsafe { slice.get_unchecked(0) } != b'\"' {
-            return Ok(Vec::from(slice));
+            return Ok(Cow::Borrowed(slice));
         }
         if slice.len() < 2 {
             return Err(UnquoteError::InvalidQuotedString);
@@ -364,7 +367,7 @@ impl<'a> LineReader<'a> {
             out.push(new_c);
         }
 
-        Ok(out)
+        Ok(Cow::Owned(out))
     }
 
     fn parse_files(&self) -> Result<(String, String)> {
@@ -380,10 +383,10 @@ impl<'a> LineReader<'a> {
         let new_path = LineReader::get_file(iter.next(), b"b/")
             .map_err(|_| ParsepatchError::InvalidString(self.get_line()))?;
 
-        let old = std::str::from_utf8(old_path.as_slice())
+        let old = std::str::from_utf8(&old_path)
             .map(String::from)
             .map_err(|_| ParsepatchError::InvalidString(self.get_line()))?;
-        let new = std::str::from_utf8(new_path.as_slice())
+        let new = std::str::from_utf8(&new_path)
             .map(String::from)
             .map_err(|_| ParsepatchError::InvalidString(self.get_line()))?;
 
@@ -549,7 +552,7 @@ impl<'a> PatchReader<'a> {
             trace!("Copy/Renamed from {} to {}", old, new);
 
             let diff = patch.new_diff();
-            diff.set_info(old.as_str(), new.as_str(), op, None, file_mode);
+            diff.set_info(&old, &new, op, None, file_mode);
 
             if let Some(mut _line) = self.next(PatchReader::mv, false) {
                 if _line.is_triple_minus() {
@@ -642,7 +645,7 @@ impl<'a> PatchReader<'a> {
         trace!("Files: old: {} -- new: {}", old, new);
 
         let diff = patch.new_diff();
-        diff.set_info(old.as_str(), new.as_str(), op, None, file_mode);
+        diff.set_info(&old, &new, op, None, file_mode);
         let mut line = self
             .next(PatchReader::mv, false)
             .ok_or_else(|| ParsepatchError::InvalidHunkHeader(self.get_line()))?;
@@ -866,13 +869,12 @@ mod tests {
         for c in cases.iter() {
             let buf = c.0.as_bytes();
             let v = LineReader::unquote(buf).expect(format!("Should parse {}", c.0).as_str());
-            let s = v.as_slice();
             assert!(
-                s == c.1.as_bytes(),
+                v == c.1.as_bytes(),
                 "Expected `{}` for `{}`, but got `{}`.",
                 c.1,
                 c.0,
-                String::from_utf8(v).unwrap()
+                String::from_utf8(v.to_vec()).unwrap()
             );
         }
     }
@@ -929,13 +931,12 @@ mod tests {
         for c in cases.iter() {
             let buf = c.0.as_bytes();
             let v = LineReader::get_file(Some(buf), b"a/").unwrap();
-            let s = v.as_slice();
             assert!(
-                s == c.1.as_bytes(),
+                v == c.1.as_bytes(),
                 "Expected `{}` for `{}`, but got `{}`.",
                 c.1,
                 c.0,
-                String::from_utf8(v).unwrap()
+                String::from_utf8(v.to_vec()).unwrap()
             );
         }
     }
