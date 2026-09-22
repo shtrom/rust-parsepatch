@@ -373,11 +373,7 @@ impl<'a> LineReader<'a> {
             .map(|s| LineReader::get_filename(s, self.get_line()))?
             .expect("new_path should be OK");
 
-        // SAFETY: we have early returns in case of errors above.
-        Ok((
-            old_path,
-            new_path,
-        ))
+        Ok((old_path, new_path))
     }
 
     fn parse_mode(&self, start: &'static str) -> u32 {
