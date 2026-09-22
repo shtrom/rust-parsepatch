@@ -268,9 +268,8 @@ impl<'a> LineReader<'a> {
         if unsafe { buf.get_unchecked(..) } == b"/dev/null" {
             Ok(Cow::Borrowed(""))
         } else {
-            std::str::from_utf8(&buf)
+            String::from_utf8(buf.to_vec())
                 .map_err(|_| ParsepatchError::InvalidString(line))
-                .map(String::from)
                 .map(Cow::Owned)
         }
     }
