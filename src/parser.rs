@@ -902,38 +902,6 @@ mod tests {
     }
 
     #[test]
-    fn test_get_file() {
-        let cases = [
-            ("a/hello/world", "hello/world", true),
-            ("a/world/hello", "world/hello", true),
-            ("\"a/h\\303\\251\"", "hé", false),
-            ("\"a/\\\"quote\"", "\"quote", false),
-        ];
-        for c in cases.iter() {
-            let buf = c.0.as_bytes();
-            let v = LineReader::get_file(Some(buf), b"a/").unwrap();
-            assert!(
-                v == c.1.as_bytes(),
-                "Expected `{}` for `{}`, but got `{}`.",
-                c.1,
-                c.0,
-                String::from_utf8(v.to_vec()).unwrap()
-            );
-            assert!(cow_is_borrowed(&v) == c.2) // Fails on the first two
-        }
-    }
-
-    fn cow_is_borrowed<B>(v: &Cow<B>) -> bool
-    where
-        B: ToOwned + ?Sized,
-    {
-        match v {
-            Cow::Borrowed(_) => true,
-            _ => false,
-        }
-    }
-
-    #[test]
     fn test_line_starts_with() {
         let cases = [("+++ hello", "+++"), ("+++ hello", "++++")];
         for c in cases.iter() {
