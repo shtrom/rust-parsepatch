@@ -283,28 +283,33 @@ impl<'a> LineReader<'a> {
     fn unquote(slice: &'a [u8]) -> result::Result<Cow<'a, [u8]>, UnquoteError> {
         // First, make sure we have a quoted string.
         //
-        // SAFETY: We access 0 and slice.len()-1.
-        if *unsafe { slice.get_unchecked(0) } != b'\"' {
+        if let Some(s) = slice.first() {
+            if *s != b'\"' {
+                return Ok(Cow::Borrowed(slice));
+            }
+        } else {
             return Ok(Cow::Borrowed(slice));
         }
+
         if slice.len() < 2 {
             return Err(UnquoteError::InvalidQuotedString);
         }
-        if *unsafe { slice.get_unchecked(slice.len() - 1) } != b'\"' {
-            return Err(UnquoteError::InvalidQuotedString);
+
+        if let Some(e) = slice.last() {
+            if *e != b'\"' {
+                return Err(UnquoteError::InvalidQuotedString);
+            }
         };
-        let slice = unsafe { slice.get_unchecked(1..slice.len() - 1) };
+        let slice = slice
+            .get(1..slice.len() - 1)
+            .ok_or(UnquoteError::InvalidQuotedString)?;
 
         let mut out = Vec::with_capacity(slice.len());
 
         let mut r = 0;
 
         fn advance_checked(r: &mut usize, slice: &[u8]) -> result::Result<u8, UnquoteError> {
-            if *r >= slice.len() {
-                return Err(UnquoteError::QuotedStringOverflow);
-            }
-            // SAFETY: We just checked that r was within bounds.
-            let c = unsafe { slice.get_unchecked(*r) };
+            let c = slice.get(*r).ok_or(UnquoteError::QuotedStringOverflow)?;
             *r += 1;
             Ok(*c)
         }
