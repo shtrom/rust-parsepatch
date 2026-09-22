@@ -275,26 +275,6 @@ impl<'a> LineReader<'a> {
         }
     }
 
-    fn get_file(slice: Option<&'a [u8]>, starter: &[u8]) -> result::Result<Cow<'a, [u8]>, String> {
-        if let Some(path) = slice {
-            let path = Self::unquote(path).map_err(|e| format!("{}", e))?;
-
-            let path = if let Some(start) = path.get(..2) {
-                if start == starter {
-                    Cow::Borrowed(unsafe { path.get_unchecked(2..) })
-                } else {
-                    path
-                }
-            } else {
-                path
-            };
-
-            Ok(Cow::Owned(path.to_vec()))
-        } else {
-            Ok(Cow::Borrowed(&[]))
-        }
-    }
-
     /// Unquote C-style strings.
     ///
     /// Based on [0].
@@ -370,7 +350,7 @@ impl<'a> LineReader<'a> {
         Ok(Cow::Owned(out))
     }
 
-    fn parse_files(&self) -> Result<(String, String)> {
+    fn parse_files(&self) -> Result<(Cow<'a, str>, Cow<'a, str>)> {
         // We know we start with 'diff '
         let buf = unsafe { self.buf.get_unchecked(5..) };
         let mut iter = buf.split(|c| *c == b' ');
@@ -378,19 +358,20 @@ impl<'a> LineReader<'a> {
         // skip --git or -r
         iter.next();
 
-        let old_path = LineReader::get_file(iter.next(), b"a/")
-            .map_err(|_| ParsepatchError::InvalidString(self.get_line()))?;
-        let new_path = LineReader::get_file(iter.next(), b"b/")
-            .map_err(|_| ParsepatchError::InvalidString(self.get_line()))?;
+        let old_path = iter
+            .next()
+            .ok_or(ParsepatchError::InvalidString(self.get_line()))
+            .map(|s| LineReader::get_filename(s, self.get_line()))?;
+        let new_path = iter
+            .next()
+            .ok_or(ParsepatchError::InvalidString(self.get_line()))
+            .map(|s| LineReader::get_filename(s, self.get_line()))?;
 
-        let old = std::str::from_utf8(&old_path)
-            .map(String::from)
-            .map_err(|_| ParsepatchError::InvalidString(self.get_line()))?;
-        let new = std::str::from_utf8(&new_path)
-            .map(String::from)
-            .map_err(|_| ParsepatchError::InvalidString(self.get_line()))?;
-
-        Ok((old, new))
+        // SAFETY: we have early returns in case of errors above.
+        Ok((
+            old_path.expect("old_path should be OK"),
+            new_path.expect("new_path should be OK"),
+        ))
     }
 
     fn parse_mode(&self, start: &'static str) -> u32 {
@@ -471,7 +452,7 @@ impl<'a> PatchReader<'a> {
             trace!("Single diff line: new: {}", new);
 
             let diff = patch.new_diff();
-            diff.set_info(old.as_str(), new.as_str(), FileOp::None, None, None);
+            diff.set_info(&old, &new, FileOp::None, None, None);
             diff.close();
             return Ok(());
         };
@@ -494,8 +475,8 @@ impl<'a> PatchReader<'a> {
 
                 let diff = patch.new_diff();
                 diff.set_info(
-                    old.as_str(),
-                    new.as_str(),
+                    &old,
+                    &new,
                     FileOp::None,
                     None,
                     Some(file_mode),
@@ -522,7 +503,7 @@ impl<'a> PatchReader<'a> {
             trace!("Single diff line: old: {} -- new: {}", old, new);
 
             let diff = patch.new_diff();
-            diff.set_info(old.as_str(), new.as_str(), FileOp::None, None, file_mode);
+            diff.set_info(&old, &new, FileOp::None, None, file_mode);
             diff.close();
             self.set_last(line);
             return Ok(());
@@ -581,7 +562,7 @@ impl<'a> PatchReader<'a> {
                     trace!("Single new/delete diff line: new: {}", new);
 
                     let diff = patch.new_diff();
-                    diff.set_info(old.as_str(), new.as_str(), op, None, file_mode);
+                    diff.set_info(&old, &new, op, None, file_mode);
                     diff.close();
                     return Ok(());
                 };
@@ -596,7 +577,7 @@ impl<'a> PatchReader<'a> {
                     let diff = patch.new_diff();
                     let sizes = self.skip_binary();
 
-                    diff.set_info(old.as_str(), new.as_str(), op, Some(sizes), file_mode);
+                    diff.set_info(&old, &new, op, Some(sizes), file_mode);
                     diff.close();
                     return Ok(());
                 } else if PatchReader::diff(&line) {
@@ -605,7 +586,7 @@ impl<'a> PatchReader<'a> {
                     trace!("Single new/delete diff line: new: {}", new);
 
                     let diff = patch.new_diff();
-                    diff.set_info(old.as_str(), new.as_str(), op, None, file_mode);
+                    diff.set_info(&old, &new, op, None, file_mode);
                     diff.close();
                     self.set_last(line);
                     return Ok(());
